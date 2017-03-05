@@ -10,8 +10,13 @@ projects: [spring-batch]
 :icons: font
 :source-highlighter: prettify
 :project_id: flow-batch-processing
-This guide walks you through the process of creating a flow batch-driven solution
-This project is built using the provided basic sample on Spring Boot Documentation (https://github.com/spring-guides/gs-batch-processing)
+This guide walks you through the process of creating a flow batch-driven solution.
+This project is built using the provided basic sample on Spring Boot Documentation (https://github.com/spring-guides/gs-batch-processing).
+The main difference between the demo given in the spring batch documentation and this fork is the use of the multisources input(two csv files) and the flow management.
+In the first step of the project, the program reads input from the first csv files to collect two attributes (person.firstName, person.lastName).
+The writer of the first step does not persist created entities to a database. The first step output is completed in by the second step.
+The second step reads another input file, and for every existing item in the first step output, fill the age attribute (person.age).
+The join column is the first name. Note that it is better to use a unique Id for the join, but to stick to the initial sample, I chose to add a single field.
 
 == What you'll build
 
@@ -42,17 +47,19 @@ Typically your customer or a business analyst supplies two spreadsheet. In this 
 ----
 include::initial/src/main/resources/sample-data.csv[]
 ----
+
+The first spreadsheet contains a first name and a last name on each row, separated by a comma. 
+
 `src/main/resources/sample-data2.csv`
 [source,csv]
 ----
 include::initial/src/main/resources/sample-data2.csv[]
 ----
 
-The first spreadsheet contains a first name and a last name on each row, separated by a comma. 
 The second spreadsheet contains a first name and an age on each row, separated by a comma. 
 
 
-Next, you write a SQL script to create a table to store the data.
+Next, you write a SQL script to create a table to store the data (Person [FIRST_NAME, LAST_NAME, AGE]).
 
 `src/main/resources/schema-all.sql`
 [source,sql]
@@ -71,10 +78,11 @@ Now that you see the format of data inputs and outputs, you write code to repres
 `src/main/java/net/slm/batch/Person.java`
 [source,java]
 ----
-include::complete/src/main/java/net/slm/batch/Person.java[]
+include::spring-boot-use-cases/src/main/java/net/slm/batch/Person.java[]
 ----
 
 You can instantiate the `Person` class either with first and last name through a constructor, or by setting the properties.
+Because the item processor uses a final instance, we added a new constructor to support filling age attribute on instantiation(constructor).
 
 
 == Create an intermediate processor
@@ -84,13 +92,20 @@ A common paradigm in batch processing is to ingest data, transform it, and then 
 `src/main/java/net/slm/batch/PersonItemProcessor.java`
 [source,java]
 ----
-include::complete/src/main/java/net/slm/batch/PersonItemProcessor.java[]
+include::spring-boot-use-cases/src/main/java/net/slm/batch/PersonItemProcessor.java[]
 ----
 
 `PersonItemProcessor` implements Spring Batch's `ItemProcessor` interface. This makes it easy to wire the code into a batch job that you define further down in this guide. According to the interface, you receive an incoming `Person` object, after which you transform it to an upper-cased `Person`.
 
 NOTE: There is no requirement that the input and output types be the same. In fact, after one source of data is read, sometimes the application's data flow needs a different data type.
 
+`src/main/java/net/slm/batch/ItemProcessorL2.java`
+[source,java]
+----
+include::spring-boot-use-cases/src/main/java/net/slm/batch/ItemProcessorL2.java[]
+----
+`ItemProcessorL2` implements Spring Batch `ItemProcessor`. We added one attribute, the `StepExecution` to pass intermediate results through the job context.
+The `ItemProcessorL2` (L2 stands for Level 2), fills the age attribute gathered from another input (csv  file).
 
 == Put together a batch job
 
@@ -99,7 +114,7 @@ Now you put together the actual batch job. Spring Batch provides many utility cl
 `src/main/java/net/slm/batch/BatchConfiguration.java`
 [source,java]
 ----
-include::complete/src/main/java/net/slm/batch/BatchConfiguration.java[]
+include::spring-boot-use-cases/src/main/java/net/slm/batch/BatchConfiguration.java[]
 ----
 
 For starters, the `@EnableBatchProcessing` annotation adds many critical beans that support jobs and saves you a lot of leg work. This example uses a memory-based database (provided by `@EnableBatchProcessing`), meaning that when it's done, the data is gone.
@@ -109,22 +124,23 @@ Break it down:
 `src/main/java/net/slm/batch/BatchConfiguration.java`
 [source,java]
 ----
-include::/complete/src/main/java/net/slm/batch/BatchConfiguration.java[tag=readerwriterprocessor]
+include::/spring-boot-use-cases/src/main/java/net/slm/batch/BatchConfiguration.java[tag=readerwriterprocessor]
 ----
 .
 The first chunk of code defines the input, processor, and output.
 - `reader()` creates an `ItemReader`. It looks for a file called `sample-data.csv` and parses each line item with enough information to turn it into a `Person`.
 - `processor()` creates an instance of our `PersonItemProcessor` you defined earlier, meant to uppercase the data.
-- `write(DataSource)` creates an `ItemWriter`. This one is aimed at a JDBC destination and automatically gets a copy of the dataSource created by `@EnableBatchProcessing`. It includes the SQL statement needed to insert a single `Person` driven by Java bean properties.
+- `write(DataSource)` creates an `ItemWriter`. In the first step, it juste writes the processed items onto a Java Map <String, Person> Object. One the second step, this one is aimed at a JDBC destination and automatically gets a copy of the dataSource created by `@EnableBatchProcessing`. It includes the SQL statement needed to insert a single `Person` driven by Java bean properties.
 
 The next chunk focuses on the actual job configuration.
 
 `src/main/java/net/slm/batch/BatchConfiguration.java`
 [source,java]
 ----
-include::/complete/src/main/java/net/slm/batch/BatchConfiguration.java[tag=jobstep]
+include::/spring-boot-use-cases/src/main/java/net/slm/batch/BatchConfiguration.java[tag=jobstep]
 ----
 .
+//needs revision
 The first method defines the job and the second one defines a single step. Jobs are built from steps, where each step can involve a reader, a processor, and a writer. 
 
 In this job definition, you need an incrementer because jobs use a database to maintain execution state. You then list each step, of which this job has only one step. The job ends, and the Java API produces a perfectly configured job.
@@ -136,7 +152,7 @@ NOTE: chunk() is prefixed `<Person,Person>` because it's a generic method. This 
 `src/main/java/net/slm/batch/JobCompletionNotificationListener.java`
 [source,java]
 ----
-include::/complete/src/main/java/net/slm/batch/JobCompletionNotificationListener.java[]
+include::/spring-boot-use-cases/src/main/java/net/slm/batch/JobCompletionNotificationListener.java[]
 ----
 
 This code listens for when a job is `BatchStatus.COMPLETED`, and then uses `JdbcTemplate` to inspect the results.
@@ -150,7 +166,7 @@ Although batch processing can be embedded in web apps and WAR files, the simpler
 `src/main/java/net/slm/batch/Application.java`
 [source,java]
 ----
-include::complete/src/main/java/net/slm/batch/Application.java[]
+include::spring-boot-use-cases/src/main/java/net/slm/batch/Application.java[]
 ----
 
 include::https://raw.githubusercontent.com/spring-guides/getting-started-macros/master/spring-boot-application.adoc[]
